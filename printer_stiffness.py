@@ -356,10 +356,162 @@ def match_block(p: Part, lib):
         return
     bb = sorted(float(x) for x in (p.bbox[1] - p.bbox[0]))
     for name, bl in lib["blocks"].items():
-        ref = sorted(bl["bbox"])
-        if all(abs(a - b) <= max(1.5, 0.04 * b) for a, b in zip(bb, ref)):
-            p.lib_match = name
-            return
+        for key, note in (("bbox", ""), ("body_bbox", "main body")):
+            ref = bl.get(key)
+            if ref and all(abs(a - b) <= max(1.0, 0.03 * b) for a, b in zip(bb, sorted(ref))):
+                p.lib_match = name
+                p.lib_note = note
+                if p.role == "unmatched" and bl.get("material") in MATERIALS:
+                    p.material = bl["material"]
+                    p.rho, p.nu, p.E, p.e_factor = (MATERIALS[p.material]["rho"], MATERIALS[p.material]["nu"],
+                                                    MATERIALS[p.material]["E"], 1.0)
+                    p.mass = p.volume * p.rho
+                    p.role = "catalog part"
+                return
+
+
+def shape_rule(p: Part, lib):
+    """Recognise unnamed bodies by shape (e.g. GT2 belts exported as thin 6 mm loops)."""
+    if not lib or not lib.get("shape_rules") or p.role not in ("unmatched",) or not p.instance.startswith("solid_"):
+        return None
+    dims = sorted(float(x) for x in (p.bbox[1] - p.bbox[0]))
+    fill = p.volume / max(dims[0] * dims[1] * dims[2], 1e-9)
+    for r in lib["shape_rules"]:
+        lo, hi = r.get("one_dim_between", [0, 1e9])
+        if not any(lo <= d <= hi for d in dims):
+            continue
+        if fill <= r.get("max_fill", 1.0) or dims[0] <= r.get("or_thinner_than", -1):
+            return r
+    return None
+
+
+def merge_collinear(parts, contacts, args, quiet=False):
+    """Fuse bars that the CAD split into several collinear solids (same label or unnamed, same section, touching
+    end to end) into one bar. Also report collinear pieces of one bar that leave a gap (e.g. a stretched rail
+    whose middle was cut through a bolt hole). Returns parts, contacts, merges, gaps."""
+    beams = [p for p in parts if p.kind == "beam"]
+    uf = UnionFind(len(parts))
+    gaps = []
+
+    def same_family(a, b):
+        if a.instance == b.instance:
+            return True
+        return a.instance.startswith("solid_") and b.instance.startswith("solid_")
+
+    for ii, a in enumerate(beams):
+        for b in beams[ii + 1:]:
+            if a.material != b.material or not same_family(a, b):
+                continue
+            if abs(float(a.e[:, 0] @ b.e[:, 0])) < 0.9995:
+                continue
+            sa, sb = sorted(a.ext[1:]), sorted(b.ext[1:])
+            if abs(sa[0] - sb[0]) > 0.3 or abs(sa[1] - sb[1]) > 0.3 or abs(a.volume / a.L - b.volume / b.L) > 0.05 * a.volume / a.L:
+                continue
+            ax = a.e[:, 0]
+            d = b.c - a.c
+            if np.linalg.norm(d - (d @ ax) * ax) > 0.5:
+                continue
+            a0, a1 = a.c @ ax + a.tmin, a.c @ ax + a.tmax
+            sgn = 1.0 if (b.e[:, 0] @ ax) > 0 else -1.0
+            bt = sorted([b.c @ ax + sgn * b.tmin, b.c @ ax + sgn * b.tmax])
+            gap = max(bt[0] - a1, a0 - bt[1])
+            if gap <= args.contact_tol + 0.05:
+                uf.union(a.idx, b.idx)
+            elif gap <= 400:
+                lo, hi = (a1, bt[0]) if bt[0] >= a1 else (bt[1], a0)
+                fill = [p.name for p in parts if p is not a and p is not b
+                        and lo - 1 <= min(p.c @ ax + p.tmin, p.c @ ax + p.tmax) and max(p.c @ ax + p.tmin, p.c @ ax + p.tmax) <= hi + 1
+                        and np.linalg.norm((p.c - a.c) - ((p.c - a.c) @ ax) * ax) < max(a.ext[1], a.ext[2])]
+                gaps.append(dict(a=a.idx, b=b.idx, gap=round(gap, 1), fillers=fill))
+    groups = {}
+    for p in parts:
+        groups.setdefault(uf.find(p.idx), []).append(p)
+    merges = []
+    new_parts, remap = [], {}
+    for root, ps in sorted(groups.items()):
+        if len(ps) == 1:
+            p = ps[0]
+        else:
+            p0 = ps[0]
+            ax = p0.e[:, 0]
+            V = sum(q.volume for q in ps)
+            m = sum(q.mass for q in ps)
+            c = sum(q.c * q.volume for q in ps) / V
+            ends = []
+            for q in ps:
+                sgn = 1.0 if (q.e[:, 0] @ ax) > 0 else -1.0
+                ends += [q.c @ ax + sgn * q.tmin, q.c @ ax + sgn * q.tmax]
+            t0, t1 = min(ends) - c @ ax, max(ends) - c @ ax
+            p = Part(**{**p0.__dict__})
+            p.volume, p.mass, p.c = V, m, c
+            p.tmin, p.tmax = float(t0), float(t1)
+            p.L = float(t1 - t0)
+            p.ext = np.array([p.L, p0.ext[1], p0.ext[2]])
+            if not p0.lib_match:
+                p.A = V / p.L
+            p.bbox = (np.min([q.bbox[0] for q in ps], axis=0), np.max([q.bbox[1] for q in ps], axis=0))
+            p.lib_note = (p0.lib_note + "; " if p0.lib_note else "") + f"merged from {len(ps)} solids"
+            if p0.instance.startswith("solid_"):
+                p.name = p.instance = p.label = "+".join(q.instance for q in ps)
+            merges.append(dict(name=p.name, pieces=[q.name for q in ps], length=round(p.L, 1)))
+        for q in ps:
+            remap[q.idx] = len(new_parts)
+        p.idx = len(new_parts)
+        new_parts.append(p)
+    cmap = {}
+    for i, j, pts in contacts:
+        a, b = remap[i], remap[j]
+        if a == b:
+            continue
+        key = (min(a, b), max(a, b))
+        cmap.setdefault(key, []).extend(pts)
+    new_contacts = [(a, b, pts) for (a, b), pts in cmap.items()]
+    gaps = [g for g in gaps if remap[g["a"]] != remap[g["b"]]]       # pieces later fused into one bar
+    for g in gaps:
+        g["a"], g["b"] = new_parts[remap[g["a"]]].name, new_parts[remap[g["b"]]].name
+    if merges:
+        log(f"      merged {sum(len(m['pieces']) for m in merges)} split solids into {len(merges)} bars", quiet)
+    return new_parts, new_contacts, merges, gaps
+
+
+def _cache_path(args, lib):
+    import hashlib
+    st = os.stat(args.step)
+    libsig = []
+    if lib and os.path.isdir(args.library):
+        for f in lib["files"]:
+            libsig.append((f, os.stat(os.path.join(args.library, f)).st_mtime))
+    key = repr((__version__, os.path.abspath(args.step), st.st_size, st.st_mtime, args.up, args.contact_tol,
+                args.contact_spacing, args.min_volume, args.slender, args.ignore, args.material_rules,
+                args.print_profile, args.default_material, args.no_library_sections, args.extrusion_torsion_factor,
+                libsig))
+    h = hashlib.sha1(key.encode()).hexdigest()[:16]
+    d = os.environ.get("PS_CACHE_DIR") or os.path.join(os.path.expanduser("~"), ".cache", "printer-stiffness")
+    return os.path.join(d, f"{os.path.basename(args.step)}.{h}.pkl")
+
+
+def load_parts_cached(args, quiet=False, lib=None):
+    """load_parts() with a disk cache: reading a big STEP and finding contacts takes minutes, the analysis
+    seconds - re-runs with other loads or AI settings reuse the geometry. --no-cache to force a re-read."""
+    import pickle
+    path = None if getattr(args, "no_cache", False) else _cache_path(args, lib)
+    if path and os.path.isfile(path):
+        try:
+            with open(path, "rb") as f:
+                data = pickle.load(f)
+            log(f"[1-2/6] Geometry from cache ({path})", quiet)
+            return data
+        except Exception:
+            pass
+    data = load_parts(args, quiet, lib)
+    if path:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                pickle.dump(data, f)
+        except Exception:
+            pass
+    return data
 
 
 def load_parts(args, quiet=False, lib=None, keep_open=False):
@@ -449,9 +601,48 @@ def load_parts(args, quiet=False, lib=None, keep_open=False):
             proj = projc
         order = np.argsort(-ext)
         vec, ext, proj = vec[:, order], ext[order], proj[:, order]
+        # Section axes: square/round sections have two equal inertia eigenvalues, so eigh can return any rotation
+        # (a 2020 bar then looks 21.5 x 21.5 or 28 x 28). Pick the in-plane rotation with the smallest
+        # bounding rectangle, preferring global axes.
+        e1 = vec[:, 0]
+        u = vec[:, 1] - (vec[:, 1] @ e1) * e1
+        u /= np.linalg.norm(u)
+        w_ = np.cross(e1, u)
+        cands = list(np.radians(np.arange(0.0, 90.0, 0.5)))
+        for g in np.eye(3):
+            gp = g - (g @ e1) * e1
+            if np.linalg.norm(gp) > 0.5:
+                gp /= np.linalg.norm(gp)
+                cands.append(math.atan2(gp @ w_, gp @ u) % (math.pi / 2))
+        Q = P - c
+        best = None
+        for th in cands:
+            a_ = math.cos(th) * u + math.sin(th) * w_
+            b_ = -math.sin(th) * u + math.cos(th) * w_
+            ea, eb = np.ptp(Q @ a_), np.ptp(Q @ b_)
+            area = ea * eb
+            if best is None or area < best[0] * (1 - 1e-6):
+                best = (area, a_, b_, ea, eb)
+        _, a_, b_, ea, eb = best
+        if eb > ea:
+            a_, b_, ea, eb = b_, -a_, eb, ea
+        vec = np.column_stack([e1, a_, b_])
+        for k in range(3):
+            v = vec[:, k]
+            j = int(np.argmax(np.abs(v)))
+            if abs(v[j]) > 0.9999:
+                v2 = np.zeros(3); v2[j] = math.copysign(1.0, v[j]); vec[:, k] = v2
         if np.linalg.det(vec) < 0:
             vec[:, 2] *= -1
-            proj[:, 2] *= -1
+        if np.all(np.max(np.abs(vec), axis=0) > 0.9999):
+            proj = (Cg - c) @ vec           # axis aligned: bbox is exact (also for round parts)
+        else:
+            proj = (P - c) @ vec
+        ext = proj.max(0) - proj.min(0)
+        if ext[0] < ext[1]:                 # keep e1 the longest
+            vec = vec[:, [1, 0, 2]]; vec[:, 2] *= -1; proj = proj[:, [1, 0, 2]]; ext = ext[[1, 0, 2]]
+        if ext[1] < ext[2]:
+            vec = vec[:, [0, 2, 1]]; vec[:, 2] *= -1; proj = proj[:, [0, 2, 1]]; ext = ext[[0, 2, 1]]
         p = Part(idx=len(parts), tag=t, name=name, material=mat, volume=V,
                  mass=V * MATERIALS[mat]["rho"], c=c, e=vec, ext=ext, label=label, instance=base,
                  role=cl["role"], print_profile=cl["print_profile"])
@@ -493,6 +684,10 @@ def load_parts(args, quiet=False, lib=None, keep_open=False):
             p.kind = "block"
         if p.kind != "beam":
             match_block(p, lib)
+        sr = shape_rule(p, lib)
+        if sr and sr.get("ignore"):
+            excluded.append((name, f"ignored by shape: {sr['name']}"))
+            continue
         parts.append(p)
     log(f"      {len(parts)} structural bodies, {len(excluded)} ignored", quiet)
 
@@ -905,6 +1100,9 @@ def modal(model: Model, K, fd, emats, nmodes, quiet=False):
     Kf = K[fd][:, fd].tocsc()
     Mf = sp.diags(Mdiag[fd]).tocsc()
     k = min(nmodes, len(fd) - 2)
+    frame_nodes = sorted({n for p in model.parts for n in p.nodes
+                          if p.kind == "beam" and (p.role in ("extrusion", "linear rail")
+                                                    or (p.lib_match and p.lib_match not in ("T8",)))})
     try:
         w2, phi = spla.eigsh(Kf, k=k, M=Mf, sigma=-1.0, which="LM")
     except Exception as ex:
@@ -925,7 +1123,19 @@ def modal(model: Model, K, fd, emats, nmodes, quiet=False):
         tw = float(np.sum(np.abs(r[:, 0] * dt[:, 1] - r[:, 1] * dt[:, 0]) / np.maximum(np.hypot(r[:, 0], r[:, 1]), 1)))
         lab = max((("X sway", tx), ("Y sway", ty), ("Z bounce", tz), ("twist", tw)), key=lambda t: t[1])[0]
         en = energy_breakdown(model, emats, u)
-        out.append(dict(freq_hz=f, shape=lab, energy=en, u=u))
+        # kinetic-energy share of the frame (extrusions + rails) vs local sub-assemblies (bed on spacers, motors...)
+        ke = model.node_mass * np.sum(disp ** 2, axis=1)
+        tot = float(ke.sum()) or 1.0
+        frame_frac = float(ke[frame_nodes].sum()) / tot if len(frame_nodes) else 1.0
+        per_part = {}
+        for p in model.parts:
+            if p.nodes:
+                per_part[p.name] = float(ke[list(set(p.nodes))].sum())
+        dominant = max(per_part, key=per_part.get) if per_part else ""
+        local = frame_frac < 0.25
+        if local:
+            lab = f"local: {dominant}"
+        out.append(dict(freq_hz=f, shape=lab, energy=en, u=u, frame_share=frame_frac, local=local, dominant=dominant))
     return out
 
 
@@ -1118,13 +1328,22 @@ def findings(model: Model, A, args):
                 out.append(f"{k}: printed part '{p.name}' ({p.material}, {p.print_profile or 'solid'}, E~{p.E:.0f} MPa) "
                            f"takes {f*100:.0f}% of the flexibility; consider metal, more walls/infill or a stiffer shape"
                            + (f" (creep: {creep})" if creep else "") + ".")
-    if A["modes"]:
-        f1 = A["modes"][0]["freq_hz"]
+    fm = [m for m in A["modes"] if not m.get("local")]
+    loc = [m for m in A["modes"] if m.get("local")]
+    if loc:
+        out.append("Local modes below the first frame mode (sub-assemblies moving on their own, not the frame): " +
+                   ", ".join(f"{m['freq_hz']:.0f} Hz {m['dominant']}" for m in loc[:5]) +
+                   ". Very low values usually mean a part held by one contact or by soft parts (silicone spacers) in the model.")
+    if fm:
+        f1 = fm[0]["freq_hz"]
         rating = "LOW (expect ringing; frame mode may sit inside input-shaper range)" if f1 < 40 else \
             "MODERATE" if f1 < 80 else "GOOD"
-        out.append(f"First frame mode {f1:.0f} Hz ({A['modes'][0]['shape']}) - {rating} (heuristic bands: <40 low, 40-80 moderate, >80 good).")
+        out.append(f"First frame mode {f1:.0f} Hz ({fm[0]['shape']}) - {rating} (heuristic bands: <40 low, 40-80 moderate, >80 good).")
+    elif A["modes"]:
+        out.append(f"No frame mode among the first {len(A['modes'])} modes - raise --modes.")
     for row in member_table(model):
-        if row["type"] == "beam" and row.get("span_freq_hz") and row["span_freq_hz"] < 60 and row["longest_span_mm"] > 150:
+        if row["type"] == "beam" and row.get("role") not in ("lead screw",) and row.get("span_freq_hz") \
+                and row["span_freq_hz"] < 60 and row["longest_span_mm"] > 150:
             out.append(f"'{row['name']}' has a {row['longest_span_mm']:.0f} mm unsupported span (local bending mode ~{row['span_freq_hz']:.0f} Hz).")
     if A["whatifs"]:
         w = A["whatifs"][0]
@@ -1184,10 +1403,10 @@ def ai_payload(model, A, args, finds):
             total_mass_kg=round(float(model.node_mass.sum()), 2)),
         load_cases={k: {kk: (round(v, 3) if isinstance(v, float) else v) for kk, v in s.items()}
                     for k, s in A["summary"].items()},
-        modes=[dict(freq_hz=round(m["freq_hz"], 1), shape=m["shape"],
+        modes=[dict(freq_hz=round(m["freq_hz"], 1), shape=m["shape"], local_subassembly=m.get("local", False),
                     top_contributors=[owner_label(model, o) for o, _ in
                                       sorted(m["energy"].items(), key=lambda t: -t[1])[:3]])
-               for m in A["modes"][:4]],
+               for m in A["modes"][:8]],
         flexibility_share_per_case=lat_e,
         what_if_studies=[dict(change=w["change"], avg_gain_pct=round(w["avg_gain_pct"], 1),
                               gain_pct={k: round(v, 1) for k, v in w["gain_pct"].items()})
@@ -1240,7 +1459,8 @@ def plot(model: Model, A, path):
         return None
     panels = [(k, A["disp"][k]) for k in ("accel_X", "accel_Y", "torsion_Z") if k in A["disp"]]
     if A["modes"]:
-        panels.append((f"mode 1: {A['modes'][0]['freq_hz']:.0f} Hz ({A['modes'][0]['shape']})", A["modes"][0]["u"]))
+        fm = [m for m in A["modes"] if not m.get("local")] or A["modes"]
+        panels.append((f"first frame mode: {fm[0]['freq_hz']:.0f} Hz ({fm[0]['shape']})", fm[0]["u"]))
     fig = plt.figure(figsize=(6 * len(panels), 6))
     xyz = model.xyz
     size = float(np.linalg.norm(xyz.max(0) - xyz.min(0)))
@@ -1288,7 +1508,10 @@ def write_report(model, A, args, finds, ai_text, outdir, plot_path):
         else:
             L.append(f"| {k} | {s['description']} | {s['rot_deg']*3600:.1f} arcsec (max {s['max_um']:.1f} um) | {s['stiffness_Nm_per_deg']:.0f} N*m/deg |")
     if A["modes"]:
-        L.append("\n**Natural frequencies:** " + ", ".join(f"{m['freq_hz']:.0f} Hz ({m['shape']})" for m in A["modes"]))
+        L.append("\n**Natural frequencies (frame):** " + (", ".join(f"{m['freq_hz']:.0f} Hz ({m['shape']})" for m in A["modes"] if not m.get("local")) or "none in the computed range"))
+        loc = [m for m in A["modes"] if m.get("local")]
+        if loc:
+            L.append("\n**Local modes (sub-assemblies, not the frame):** " + ", ".join(f"{m['freq_hz']:.0f} Hz ({m['dominant']})" for m in loc))
     L.append("\n## Automatic findings\n")
     L += [f"- {f}" for f in finds]
     L.append("\n## What-if studies (stiffness gain vs current design)\n")
@@ -1344,7 +1567,8 @@ def write_json(model, A, args, finds, ai_text, outdir):
     data = dict(
         file=os.path.abspath(args.step), version=__version__, settings=vars(args).copy(),
         summary=A["summary"], findings=finds,
-        modes=[dict(freq_hz=m["freq_hz"], shape=m["shape"], energy=ser_en(m["energy"])[:10]) for m in A["modes"]],
+        modes=[dict(freq_hz=m["freq_hz"], shape=m["shape"], local=m.get("local", False), frame_share=m.get("frame_share"),
+                    energy=ser_en(m["energy"])[:10]) for m in A["modes"]],
         energies={k: ser_en(v) for k, v in A["energies"].items()},
         whatifs=A["whatifs"], members=member_table(model),
         excluded=[dict(name=n, reason=r) for n, r in model.excluded], floating=model.floating,
@@ -1392,6 +1616,7 @@ def add_model_args(ap):
     g.add_argument("--slender", type=float, default=3.0, help="length/width ratio above which a body is a beam")
     g.add_argument("--extrusion-torsion-factor", type=float, default=0.35, help="torsion reduction for slotted profiles (CAD-estimated sections)")
     g.add_argument("--up", default="z", help="vertical axis of the CAD model: x, y, z or -z")
+    g.add_argument("--no-cache", action="store_true", help="re-read the STEP even if a cached geometry exists")
 
 
 def finish_args(ap, args):
@@ -1424,11 +1649,15 @@ def parse_args(argv=None):
     g.add_argument("--top-band", type=float, default=0.10, help="fraction of height (from the top) whose nodes receive the gantry load")
     g.add_argument("--top-z", type=float, default=None, help="explicit height (internal Z, mm) above which nodes are loaded")
     add_model_args(ap)
+    g = ap.add_argument_group("model check (runs first, see validate_model.py)")
+    g.add_argument("--edition", default="auto", help="Duender edition for the parts-list check: c300, c400, c500, auto or none")
+    g.add_argument("--length-warn", type=float, default=0.5, help="length difference that gives a warning, mm")
+    g.add_argument("--length-fail", type=float, default=2.0, help="length difference that fails, mm")
     g = ap.add_argument_group("frame model")
     g.add_argument("--joint-factor", type=float, default=0.3, help="joint link stiffness factor (1 = as stiff as the parts)")
     g.add_argument("--node-merge", type=float, default=2.0, help="merge connection points closer than this along a beam, mm")
     g.add_argument("--max-element", type=float, default=100.0, help="max beam element length, mm")
-    g.add_argument("--modes", type=int, default=6, help="number of natural frequencies")
+    g.add_argument("--modes", type=int, default=20, help="number of natural frequencies (local sub-assembly modes are labelled)")
     g.add_argument("--whatif-members", type=int, default=6, help="how many weakest members get an upsize what-if")
     g = ap.add_argument_group("local AI")
     g.add_argument("--no-ai", action="store_true", help="skip the LLM step")
@@ -1455,7 +1684,21 @@ def main(argv=None):
     if lib:
         log(f"Library: {args.library} ({', '.join(lib['files'])})", q)
 
-    parts, excluded, contacts = load_parts(args, q, lib)
+    parts, excluded, contacts = load_parts_cached(args, q, lib)
+    parts, contacts, merges, gaps = merge_collinear(parts, contacts, args, q)
+    check = None
+    try:
+        import model_check as mc
+        ed = args.edition.lower()
+        ed = mc.detect_edition(args.step, parts, excluded, lib) if ed == "auto" else (None if ed == "none" else ed)
+        check = mc.run_checks(parts, excluded, contacts, lib, args, ed, None, merges, gaps)
+        with open(os.path.join(outdir, "model_check.md"), "w", encoding="utf-8") as f:
+            f.write(mc.markdown(check, os.path.basename(args.step)))
+        c = check["counts"]
+        log(f"      model check ({ed or 'generic'}): {c['FAIL']} fail, {c['WARN']} warn, {c['PASS']} pass "
+            f"-> model_check.md", q)
+    except ImportError:
+        pass
     if not parts:
         sys.exit("Nothing structural left after filtering. Check --ignore / --min-volume.")
     model = build_model(parts, excluded, contacts, args, q)
@@ -1463,6 +1706,11 @@ def main(argv=None):
         sys.exit("Could not build a connected frame (no elements or no supports). Try a larger --contact-tol or check --up.")
     A = run_analysis(model, args, q)
     finds = findings(model, A, args)
+    if check:
+        fails = [x for x in check["checks"] if x["level"] == "FAIL"]
+        if fails:
+            finds.insert(0, f"MODEL CHECK: {len(fails)} problem(s) in the CAD itself - fix these before trusting the "
+                            f"numbers (see model_check.md): " + "; ".join(f"{x['item']}: {x['message']}" for x in fails[:5]))
 
     ai_text = None
     if not args.no_ai:
@@ -1486,7 +1734,11 @@ def main(argv=None):
             else:
                 print(f"  {k:10s} {s['stiffness_Nm_per_deg']:8.0f} N*m/deg")
         if A["modes"]:
-            print("  modes:     " + ", ".join(f"{m['freq_hz']:.0f} Hz {m['shape']}" for m in A["modes"][:4]))
+            fm = [m for m in A["modes"] if not m.get("local")]
+        print("  frame modes: " + (", ".join(f"{m['freq_hz']:.0f} Hz {m['shape']}" for m in fm[:4]) or "none found"))
+        nl = sum(1 for m in A["modes"] if m.get("local"))
+        if nl:
+            print(f"  ({nl} local sub-assembly modes below/among them - see report)")
         print("  best changes:")
         for w in A["whatifs"][:5]:
             print(f"    {w['avg_gain_pct']:+6.0f}%  {w['change']}")

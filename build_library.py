@@ -112,6 +112,7 @@ def main():
     gmsh.model.occ.importShapes(need(os.path.join(lib, "lego_mgn9.brep")))
     gmsh.model.occ.synchronize()
     rail_done = False
+    body_v, body_bb = 0.0, None
     carr_lo, carr_hi = np.full(3, 1e9), np.full(3, -1e9)
     for _, t in gmsh.model.getEntities(3):
         bb = gmsh.model.occ.getBoundingBox(3, t)
@@ -134,8 +135,11 @@ def main():
                 rail_done = True
         elif ext.max() < 50:        # block body, end caps and seals (skip the 70 mm retainer strips)
             carr_lo = np.minimum(carr_lo, bb[:3]); carr_hi = np.maximum(carr_hi, bb[3:])
+            v = gmsh.model.occ.getMass(3, t)
+            if v > body_v:
+                body_v, body_bb = v, sorted(np.round(ext, 1).tolist())
     blocks["MGN9H carriage"] = dict(bbox=sorted(np.round(carr_hi - carr_lo, 1).tolist()), material="steel",
-                                    source=rel(os.path.join(lib, "lego_mgn9.brep")))
+                                    body_bbox=body_bb, source=rel(os.path.join(lib, "lego_mgn9.brep")))
     # ---- block signatures
     for name, f, mat in (("MGN12H carriage", "carriage_mgn12h.brep", "steel"),
                          ("NEMA17 42-40", "nema17.brep", "motor"),
@@ -144,10 +148,15 @@ def main():
         gmsh.model.occ.importShapes(need(os.path.join(lib, f)))
         gmsh.model.occ.synchronize()
         lo, hi = np.full(3, 1e9), np.full(3, -1e9)
+        bv, bbb = 0.0, None
         for _, t in gmsh.model.getEntities(3):
             bb = gmsh.model.occ.getBoundingBox(3, t)
             lo = np.minimum(lo, bb[:3]); hi = np.maximum(hi, bb[3:])
-        blocks[name] = dict(bbox=sorted(np.round(hi - lo, 1).tolist()), material=mat, source=rel(os.path.join(lib, f)))
+            v = gmsh.model.occ.getMass(3, t)
+            if v > bv:
+                bv, bbb = v, sorted(np.round(np.array(bb[3:]) - np.array(bb[:3]), 1).tolist())
+        blocks[name] = dict(bbox=sorted(np.round(hi - lo, 1).tolist()), material=mat, body_bbox=bbb,
+                            source=rel(os.path.join(lib, f)))
     gmsh.finalize()
     # T8 lead screw: nominal 8 mm solid rod (the tool only uses it for mass and as a frame-free member)
     profiles["T8"] = dict(kind="lead screw", material="steel", envelope=[8.0, 8.0], A=round(math.pi * 16, 2),
@@ -188,6 +197,10 @@ def main():
             relations=([{"check": "C == K + 35", "why": "upright = lead screw + 35 (generator rule)"}] if size != "300"
                        else [{"check": "C == 550", "why": "C300 keeps Andizzle's 550 uprights"}]),
         )
+        rules["not_checked"] = {"hw": "fasteners and small hardware (counted in the manual chapters)",
+                                "BT": "GT2 belts (thin unnamed loops in the CAD; not structural)"}
+        rules["catalog"] = {"W": "MGN12H carriage", "Y": "MGN12H carriage", "X": "MGN9H carriage",
+                            "J": "NEMA17 42-40", "R": "NEMA17 42-40", "V": "coupler 5 x 8"}
         editions[f"c{size}"] = dict(
             manual=f"manual/editions/{donor_ed}",
             step_file=rel(os.path.join(CAD, "out", f"c{size}-duender-3z-mgn9x.step")),

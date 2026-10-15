@@ -1,30 +1,150 @@
 {
   "_about": "Hand-maintained part library for printer_stiffness.py / validate_model.py. Every *.json in this folder is merged (later files override earlier keys). duender_generated.json is written by build_library.py from the repo CAD; edit THIS file for materials, print settings and name rules. Units: mm, MPa, kg/mm^3.",
   "materials": {
-    "aluminum":  {"E": 69000,  "nu": 0.33, "rho": 2.70e-6, "creep": "none", "desc": "Aluminium 6063-T5/T6 (V-slot, plates, couplers)"},
-    "steel":     {"E": 200000, "nu": 0.29, "rho": 7.85e-6, "creep": "none", "desc": "Steel (linear rails, carriages, lead screws, T-brackets)"},
-    "motor":     {"E": 100000, "nu": 0.30, "rho": 5.0e-6,  "creep": "none", "desc": "Stepper motor treated as a stiff block (NEMA17 42-40 about 280 g)"},
-    "glass":     {"E": 70000,  "nu": 0.22, "rho": 2.50e-6, "creep": "none", "desc": "Glass bed / heater stack"},
-    "silicone":  {"E": 5,      "nu": 0.48, "rho": 1.10e-6, "creep": "n/a",  "desc": "Silicone bed spacers (very soft on purpose)"},
-    "asa":       {"E": 2000,   "nu": 0.35, "rho": 1.07e-6, "creep": "low",    "printed": true, "desc": "ASA - Duender default for load-bearing printed parts"},
-    "abs":       {"E": 2200,   "nu": 0.35, "rho": 1.05e-6, "creep": "low",    "printed": true, "desc": "ABS - equal to ASA for the Duender parts"},
-    "pet_cf":    {"E": 3500,   "nu": 0.35, "rho": 1.30e-6, "creep": "low",    "printed": true, "desc": "PET-CF - manual: low-creep choice for docks, tensioners, Z/bed mounts (check your brand's datasheet)"},
-    "pa_cf":     {"E": 4000,   "nu": 0.35, "rho": 1.20e-6, "creep": "high",   "printed": true, "desc": "PA-CF - stiff when dry but the manual says avoid: it creeps"},
-    "petg":      {"E": 2000,   "nu": 0.38, "rho": 1.27e-6, "creep": "medium", "printed": true, "desc": "PETG - not specified by the Duender manuals"},
-    "pla":       {"E": 3500,   "nu": 0.36, "rho": 1.24e-6, "creep": "high",   "printed": true, "desc": "PLA - manual: only for the electronics case and screen box"},
-    "pc_cf":     {"E": 6000,   "nu": 0.35, "rho": 1.25e-6, "creep": "low",    "printed": true, "desc": "PC-CF"},
-    "tpu":       {"E": 30,     "nu": 0.48, "rho": 1.21e-6, "creep": "n/a",    "printed": true, "desc": "TPU bumpers"},
-    "carbon":    {"E": 70000,  "nu": 0.30, "rho": 1.60e-6, "creep": "none", "desc": "Carbon fibre tube / plate"}
+    "aluminum": {
+      "E": 69000,
+      "nu": 0.33,
+      "rho": 2.7e-06,
+      "creep": "none",
+      "desc": "Aluminium 6063-T5/T6 (V-slot, plates, couplers)"
+    },
+    "steel": {
+      "E": 200000,
+      "nu": 0.29,
+      "rho": 7.85e-06,
+      "creep": "none",
+      "desc": "Steel (linear rails, carriages, lead screws, T-brackets)"
+    },
+    "motor": {
+      "E": 100000,
+      "nu": 0.3,
+      "rho": 5e-06,
+      "creep": "none",
+      "desc": "Stepper motor treated as a stiff block (NEMA17 42-40 about 280 g)"
+    },
+    "glass": {
+      "E": 70000,
+      "nu": 0.22,
+      "rho": 2.5e-06,
+      "creep": "none",
+      "desc": "Glass bed / heater stack"
+    },
+    "silicone": {
+      "E": 5,
+      "nu": 0.48,
+      "rho": 1.1e-06,
+      "creep": "n/a",
+      "desc": "Silicone bed spacers (very soft on purpose)"
+    },
+    "asa": {
+      "E": 2000,
+      "nu": 0.35,
+      "rho": 1.07e-06,
+      "creep": "low",
+      "printed": true,
+      "desc": "ASA - Duender default for load-bearing printed parts"
+    },
+    "abs": {
+      "E": 2200,
+      "nu": 0.35,
+      "rho": 1.05e-06,
+      "creep": "low",
+      "printed": true,
+      "desc": "ABS - equal to ASA for the Duender parts"
+    },
+    "pet_cf": {
+      "E": 3500,
+      "nu": 0.35,
+      "rho": 1.3e-06,
+      "creep": "low",
+      "printed": true,
+      "desc": "PET-CF - manual: low-creep choice for docks, tensioners, Z/bed mounts (check your brand's datasheet)"
+    },
+    "pa_cf": {
+      "E": 4000,
+      "nu": 0.35,
+      "rho": 1.2e-06,
+      "creep": "high",
+      "printed": true,
+      "desc": "PA-CF - stiff when dry but the manual says avoid: it creeps"
+    },
+    "petg": {
+      "E": 2000,
+      "nu": 0.38,
+      "rho": 1.27e-06,
+      "creep": "medium",
+      "printed": true,
+      "desc": "PETG - not specified by the Duender manuals"
+    },
+    "pla": {
+      "E": 3500,
+      "nu": 0.36,
+      "rho": 1.24e-06,
+      "creep": "high",
+      "printed": true,
+      "desc": "PLA - manual: only for the electronics case and screen box"
+    },
+    "pc_cf": {
+      "E": 6000,
+      "nu": 0.35,
+      "rho": 1.25e-06,
+      "creep": "low",
+      "printed": true,
+      "desc": "PC-CF"
+    },
+    "tpu": {
+      "E": 30,
+      "nu": 0.48,
+      "rho": 1.21e-06,
+      "creep": "n/a",
+      "printed": true,
+      "desc": "TPU bumpers"
+    },
+    "carbon": {
+      "E": 70000,
+      "nu": 0.3,
+      "rho": 1.6e-06,
+      "creep": "none",
+      "desc": "Carbon fibre tube / plate"
+    }
   },
   "print_profiles": {
-    "duender_load_bearing": {"walls": 5, "top_bottom": 5, "infill": 0.60, "pattern": "gyroid", "layer_mm": 0.2, "line_width_mm": 0.45,
-                             "source": "Duender manuals Ch 1 Step 1.4: ASA/ABS, 5/5/5, 60% (min 50%) gyroid for load-bearing parts"},
-    "medusahc":             {"walls": 5, "top_bottom": 5, "infill": 0.98, "pattern": "gyroid", "layer_mm": 0.2, "line_width_mm": 0.45,
-                             "source": "Duender manuals Ch 1 / Ch 12: MedusaHC parts ABS/ASA at 98% infill (Sergei)"},
-    "box":                  {"walls": 3, "top_bottom": 4, "infill": 0.15, "pattern": "gyroid", "layer_mm": 0.2, "line_width_mm": 0.45,
-                             "source": "Duender manuals Ch 1: 15% is fine for boxes"},
-    "solid":                {"walls": 99, "top_bottom": 99, "infill": 1.0, "pattern": "solid", "layer_mm": 0.2, "line_width_mm": 0.45,
-                             "source": "100% / solid"}
+    "duender_load_bearing": {
+      "walls": 5,
+      "top_bottom": 5,
+      "infill": 0.6,
+      "pattern": "gyroid",
+      "layer_mm": 0.2,
+      "line_width_mm": 0.45,
+      "source": "Duender manuals Ch 1 Step 1.4: ASA/ABS, 5/5/5, 60% (min 50%) gyroid for load-bearing parts"
+    },
+    "medusahc": {
+      "walls": 5,
+      "top_bottom": 5,
+      "infill": 0.98,
+      "pattern": "gyroid",
+      "layer_mm": 0.2,
+      "line_width_mm": 0.45,
+      "source": "Duender manuals Ch 1 / Ch 12: MedusaHC parts ABS/ASA at 98% infill (Sergei)"
+    },
+    "box": {
+      "walls": 3,
+      "top_bottom": 4,
+      "infill": 0.15,
+      "pattern": "gyroid",
+      "layer_mm": 0.2,
+      "line_width_mm": 0.45,
+      "source": "Duender manuals Ch 1: 15% is fine for boxes"
+    },
+    "solid": {
+      "walls": 99,
+      "top_bottom": 99,
+      "infill": 1.0,
+      "pattern": "solid",
+      "layer_mm": 0.2,
+      "line_width_mm": 0.45,
+      "source": "100% / solid"
+    }
   },
   "printed_model": {
     "_about": "E_eff = E * (shell + (1-shell) * infill^infill_exponent) * layer_factor, shell = min(1, 2 * walls * line_width / thinnest part dimension). Estimate only.",
@@ -32,23 +152,107 @@
     "layer_factor": 0.8
   },
   "part_rules": [
-    {"match": "^hw\\b|screw|\\bnut\\b|t-?nut|washer|insert|spacer|\\bpin\\b|f623|bearing|shim", "role": "fastener", "ignore": true},
-    {"match": "\\bbelt\\b|gt2", "role": "belt", "ignore": true},
-    {"match": "(mgn\\d+h?|linear) .*rail|\\b[xyz] rail|rail x", "role": "linear rail", "material": "steel"},
-    {"match": "mgn\\d+h? .*carriage|carriage \\(z\\)|y carriage|x carriage$", "role": "rail carriage", "material": "steel"},
-    {"match": "nema ?17|nema ?14|stepper|a/b motor|z motor$", "role": "motor", "material": "motor"},
-    {"match": "lead ?screw|\\bt8\\b", "role": "lead screw", "material": "steel"},
-    {"match": "coupler", "role": "coupler", "material": "aluminum"},
-    {"match": "corner bracket|joining plate|gusset", "role": "metal bracket", "material": "aluminum"},
-    {"match": "t-bracket", "role": "metal bracket", "material": "steel"},
-    {"match": "glass|heater", "role": "bed", "material": "glass"},
-    {"match": "bed plate|y plate", "role": "bed", "material": "aluminum"},
-    {"match": "bed spacer|wheel|silicone", "role": "bed spacer", "material": "silicone"},
-    {"match": "bumper|tpu", "role": "bumper", "material": "tpu", "print_profile": "solid"},
-    {"match": "electronics|case|screen|hdmi|box|cover", "role": "printed box", "material": "pla", "print_profile": "box"},
-    {"match": "dock|medusa", "role": "printed MedusaHC part", "material": "asa", "print_profile": "medusahc"},
-    {"match": "middle mount|bed mount|bed holder|z motor mount|motor mount|tensioner|y front|y back|\\bx [12]\\b|x_carriage|carriage_lite|carriage_bases|toolhead|idler|printed|\\bprint\\b", "role": "printed load-bearing", "material": "asa", "print_profile": "duender_load_bearing"},
-    {"match": "\\b(2020|2040|3030|4040|2060|2080)\\b|v-?slot|extrusion|x beam|upright|base side|base member|carrier|top brace|y side|stub", "role": "extrusion", "material": "aluminum"}
+    {
+      "match": "^hw\\b|(?<!lead )(?<!ball )screw|\\bnut\\b|t-?nut|washer|insert|spacer|\\bpin\\b|f623|bearing|shim",
+      "role": "fastener",
+      "ignore": true
+    },
+    {
+      "match": "\\bbelt\\b|gt2",
+      "role": "belt",
+      "ignore": true
+    },
+    {
+      "match": "(mgn\\d+h?|linear) .*rail|\\b[xyz] rail|rail x",
+      "role": "linear rail",
+      "material": "steel"
+    },
+    {
+      "match": "mgn\\d+h? .*carriage|carriage \\(z\\)|y carriage|x carriage$",
+      "role": "rail carriage",
+      "material": "steel"
+    },
+    {
+      "match": "nema ?17|nema ?14|stepper|a/b motor|z motor$",
+      "role": "motor",
+      "material": "motor"
+    },
+    {
+      "match": "lead ?screw|\\bt8\\b",
+      "role": "lead screw",
+      "material": "steel"
+    },
+    {
+      "match": "coupler",
+      "role": "coupler",
+      "material": "aluminum"
+    },
+    {
+      "match": "corner bracket|joining plate|gusset",
+      "role": "metal bracket",
+      "material": "aluminum"
+    },
+    {
+      "match": "t-bracket",
+      "role": "metal bracket",
+      "material": "steel"
+    },
+    {
+      "match": "glass|heater",
+      "role": "bed",
+      "material": "glass"
+    },
+    {
+      "match": "bed plate|y plate",
+      "role": "bed",
+      "material": "aluminum"
+    },
+    {
+      "match": "bed spacer|wheel|silicone",
+      "role": "bed spacer",
+      "material": "silicone"
+    },
+    {
+      "match": "bumper|tpu",
+      "role": "bumper",
+      "material": "tpu",
+      "print_profile": "solid"
+    },
+    {
+      "match": "electronics|case|screen|hdmi|box|cover",
+      "role": "printed box",
+      "material": "pla",
+      "print_profile": "box"
+    },
+    {
+      "match": "dock|medusa",
+      "role": "printed MedusaHC part",
+      "material": "asa",
+      "print_profile": "medusahc"
+    },
+    {
+      "match": "middle mount|bed mount|bed holder|z motor mount|motor mount|tensioner|y front|y back|\\bx [12]\\b|x_carriage|carriage_lite|carriage_bases|toolhead|idler|printed|\\bprint\\b",
+      "role": "printed load-bearing",
+      "material": "asa",
+      "print_profile": "duender_load_bearing"
+    },
+    {
+      "match": "\\b(2020|2040|3030|4040|2060|2080)\\b|v-?slot|extrusion|x beam|upright|base side|base member|carrier|top brace|y side|stub",
+      "role": "extrusion",
+      "material": "aluminum"
+    }
   ],
-  "_unmatched": "Bodies matching no rule use --default-material (aluminum) unless their name says otherwise."
+  "_unmatched": "Bodies matching no rule use --default-material (aluminum) unless their name says otherwise.",
+  "shape_rules": [
+    {
+      "name": "GT2 belt (6 mm wide loop or strip, unnamed)",
+      "one_dim_between": [
+        5.5,
+        6.6
+      ],
+      "max_fill": 0.15,
+      "or_thinner_than": 2.0,
+      "ignore": true
+    }
+  ]
 }
