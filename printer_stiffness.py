@@ -161,7 +161,8 @@ def classify(name, args, lib):
             prof = None
             if MATERIALS[mat].get("printed"):
                 prof = r.get("print_profile") or args.print_profile
-            return dict(role=r.get("role", ""), material=mat, print_profile=prof, ignore=False)
+            return dict(role=r.get("role", ""), material=mat, print_profile=prof, ignore=False,
+                        structural=r.get("structural", True))
     mat = named_material(n) or args.default_material
     return dict(role="unmatched", material=mat,
                 print_profile=args.print_profile if MATERIALS[mat].get("printed") else None, ignore=False)
@@ -235,6 +236,7 @@ class Part:
     rho: float = 0.0
     e_factor: float = 1.0
     lib_match: str = None           # matched library profile / catalog block
+    structural: bool = True         # False: kept for the model check, left out of the frame model
     lib_note: str = ""
     nodes: list = field(default_factory=list)   # node ids (beam: sorted along axis)
     node_t: list = field(default_factory=list)
@@ -498,17 +500,20 @@ def load_parts_cached(args, quiet=False, lib=None):
     if path and os.path.isfile(path):
         try:
             with open(path, "rb") as f:
-                data = pickle.load(f)
+                raw = pickle.load(f)
+            parts = [Part(**d) for d in raw["parts"]]
             log(f"[1-2/6] Geometry from cache ({path})", quiet)
-            return data
+            return parts, raw["excluded"], raw["contacts"]
         except Exception:
             pass
     data = load_parts(args, quiet, lib)
     if path:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
+            parts, excluded, contacts = data
+            # plain dicts: Part may live in __main__ or in the imported module depending on the entry point
             with open(path, "wb") as f:
-                pickle.dump(data, f)
+                pickle.dump(dict(parts=[dict(p.__dict__) for p in parts], excluded=excluded, contacts=contacts), f)
         except Exception:
             pass
     return data
@@ -645,7 +650,7 @@ def load_parts(args, quiet=False, lib=None, keep_open=False):
             vec = vec[:, [0, 2, 1]]; vec[:, 2] *= -1; proj = proj[:, [0, 2, 1]]; ext = ext[[0, 2, 1]]
         p = Part(idx=len(parts), tag=t, name=name, material=mat, volume=V,
                  mass=V * MATERIALS[mat]["rho"], c=c, e=vec, ext=ext, label=label, instance=base,
-                 role=cl["role"], print_profile=cl["print_profile"])
+                 role=cl["role"], print_profile=cl["print_profile"], structural=cl.get("structural", True))
         p.rho, p.nu = MATERIALS[mat]["rho"], MATERIALS[mat]["nu"]
         p.e_factor = printed_factor(p.print_profile, ext, lib) if MATERIALS[mat].get("printed") else 1.0
         p.E = MATERIALS[mat]["E"] * p.e_factor
@@ -748,6 +753,15 @@ def link_section(p: Part):
 
 def build_model(parts, excluded, contacts, args, quiet=False) -> Model:
     log("[3/6] Building frame model ...", quiet)
+    keep = [p for p in parts if p.structural]
+    if len(keep) < len(parts):
+        drop = [p for p in parts if not p.structural]
+        excluded = excluded + [(p.name, f"not structural ({p.role})") for p in drop]
+        remap = {p.idx: k for k, p in enumerate(keep)}
+        contacts = [(remap[i], remap[j], pts) for i, j, pts in contacts if i in remap and j in remap]
+        for k, p in enumerate(keep):
+            p.idx = k
+        parts = keep
     xyz = []
     # axis parameters for beams
     beam_t = {p.idx: [p.tmin, p.tmax] for p in parts if p.kind == "beam"}
@@ -888,7 +902,8 @@ def build_model(parts, excluded, contacts, args, quiet=False) -> Model:
     keep_ids = np.where(keep)[0]
     remap = -np.ones(nn, int)
     remap[keep_ids] = np.arange(len(keep_ids))
-    els = [e for e in els if keep[e["n"][0]] and keep[e["n"][1]]]
+    els = [dict(e, n=(int(remap[e["n"][0]]), int(remap[e["n"][1]])))
+           for e in els if keep[e["n"][0]] and keep[e["n"][1]]]
     xyz = xyz[keep_ids]
     node_mass = node_mass[keep_ids]
     for p in parts:
@@ -1100,42 +1115,59 @@ def modal(model: Model, K, fd, emats, nmodes, quiet=False):
     Kf = K[fd][:, fd].tocsc()
     Mf = sp.diags(Mdiag[fd]).tocsc()
     k = min(nmodes, len(fd) - 2)
-    frame_nodes = sorted({n for p in model.parts for n in p.nodes
-                          if p.kind == "beam" and (p.role in ("extrusion", "linear rail")
-                                                    or (p.lib_match and p.lib_match not in ("T8",)))})
-    try:
-        w2, phi = spla.eigsh(Kf, k=k, M=Mf, sigma=-1.0, which="LM")
-    except Exception as ex:
-        log(f"      modal analysis failed: {ex}", quiet)
-        return []
-    order = np.argsort(w2)
+    frame_nodes = sorted({n for p in model.parts for n in p.nodes      # metal bars = the frame
+                          if p.kind == "beam" and not MATERIALS[p.material].get("printed")
+                          and p.role not in ("lead screw",) and p.E > 20000})
+    def solve_modes(k):
+        try:
+            w2, phi = spla.eigsh(Kf, k=k, M=Mf, sigma=-1.0, which="LM")
+        except Exception as ex:
+            log(f"      modal analysis failed: {ex}", quiet)
+            return []
+        order = np.argsort(w2)
+        out = []
+        for i in order:
+            f = math.sqrt(max(w2[i], 0)) / (2 * math.pi)
+            u = np.zeros(6 * nn)
+            u[fd] = phi[:, i]
+            disp = u.reshape(-1, 6)[:, :3]
+            top = model.top
+            dt = disp[top]
+            tx, ty, tz = (float(np.sum(np.abs(dt[:, a]))) for a in range(3))
+            ctr = model.xyz[top].mean(0)
+            r = model.xyz[top] - ctr
+            tw = float(np.sum(np.abs(r[:, 0] * dt[:, 1] - r[:, 1] * dt[:, 0]) / np.maximum(np.hypot(r[:, 0], r[:, 1]), 1)))
+            lab = max((("X sway", tx), ("Y sway", ty), ("Z bounce", tz), ("twist", tw)), key=lambda t: t[1])[0]
+            en = energy_breakdown(model, emats, u)
+            # kinetic-energy share of the frame (extrusions + rails) vs local sub-assemblies (bed on spacers, motors...)
+            ke = model.node_mass * np.sum(disp ** 2, axis=1)
+            tot = float(ke.sum()) or 1.0
+            frame_frac = float(ke[frame_nodes].sum()) / tot if len(frame_nodes) else 1.0
+            per_part = {}
+            for p in model.parts:
+                if p.nodes:
+                    per_part[p.name] = float(ke[list(set(p.nodes))].sum())
+            dominant = max(per_part, key=per_part.get) if per_part else ""
+            local = frame_frac < 0.25
+            if local:
+                lab = f"local: {dominant}"
+            elif frame_frac < 0.5:
+                lab = f"{lab}, coupled with {dominant}"
+            out.append(dict(freq_hz=f, shape=lab, energy=en, u=u, frame_share=frame_frac, local=local, dominant=dominant))
+
+        return out
+
+    # Soft sub-assemblies (bed on silicone spacers, motors, the bed carriers) can fill the lowest modes;
+    # keep asking for more until a few frame modes show up.
     out = []
-    for i in order:
-        f = math.sqrt(max(w2[i], 0)) / (2 * math.pi)
-        u = np.zeros(6 * nn)
-        u[fd] = phi[:, i]
-        disp = u.reshape(-1, 6)[:, :3]
-        top = model.top
-        dt = disp[top]
-        tx, ty, tz = (float(np.sum(np.abs(dt[:, a]))) for a in range(3))
-        ctr = model.xyz[top].mean(0)
-        r = model.xyz[top] - ctr
-        tw = float(np.sum(np.abs(r[:, 0] * dt[:, 1] - r[:, 1] * dt[:, 0]) / np.maximum(np.hypot(r[:, 0], r[:, 1]), 1)))
-        lab = max((("X sway", tx), ("Y sway", ty), ("Z bounce", tz), ("twist", tw)), key=lambda t: t[1])[0]
-        en = energy_breakdown(model, emats, u)
-        # kinetic-energy share of the frame (extrusions + rails) vs local sub-assemblies (bed on spacers, motors...)
-        ke = model.node_mass * np.sum(disp ** 2, axis=1)
-        tot = float(ke.sum()) or 1.0
-        frame_frac = float(ke[frame_nodes].sum()) / tot if len(frame_nodes) else 1.0
-        per_part = {}
-        for p in model.parts:
-            if p.nodes:
-                per_part[p.name] = float(ke[list(set(p.nodes))].sum())
-        dominant = max(per_part, key=per_part.get) if per_part else ""
-        local = frame_frac < 0.25
-        if local:
-            lab = f"local: {dominant}"
-        out.append(dict(freq_hz=f, shape=lab, energy=en, u=u, frame_share=frame_frac, local=local, dominant=dominant))
+    while True:
+        out = solve_modes(k)
+        nf = sum(1 for m in out if not m.get("local"))
+        if nf >= 4 or k >= min(200, len(fd) - 2):
+            break
+        k = min(k * 2, 200, len(fd) - 2)
+    if k > nmodes:
+        log(f"      computed {k} modes to get past {sum(1 for m in out if m.get('local'))} local sub-assembly modes", quiet)
     return out
 
 
@@ -1406,7 +1438,7 @@ def ai_payload(model, A, args, finds):
         modes=[dict(freq_hz=round(m["freq_hz"], 1), shape=m["shape"], local_subassembly=m.get("local", False),
                     top_contributors=[owner_label(model, o) for o, _ in
                                       sorted(m["energy"].items(), key=lambda t: -t[1])[:3]])
-               for m in A["modes"][:8]],
+               for m in ([x for x in A["modes"] if not x.get("local")][:4] + [x for x in A["modes"] if x.get("local")][:4])],
         flexibility_share_per_case=lat_e,
         what_if_studies=[dict(change=w["change"], avg_gain_pct=round(w["avg_gain_pct"], 1),
                               gain_pct={k: round(v, 1) for k, v in w["gain_pct"].items()})
@@ -1508,10 +1540,10 @@ def write_report(model, A, args, finds, ai_text, outdir, plot_path):
         else:
             L.append(f"| {k} | {s['description']} | {s['rot_deg']*3600:.1f} arcsec (max {s['max_um']:.1f} um) | {s['stiffness_Nm_per_deg']:.0f} N*m/deg |")
     if A["modes"]:
-        L.append("\n**Natural frequencies (frame):** " + (", ".join(f"{m['freq_hz']:.0f} Hz ({m['shape']})" for m in A["modes"] if not m.get("local")) or "none in the computed range"))
+        L.append("\n**Natural frequencies (frame):** " + (", ".join(f"{m['freq_hz']:.0f} Hz ({m['shape']})" for m in [x for x in A["modes"] if not x.get("local")][:8]) or "none in the computed range"))
         loc = [m for m in A["modes"] if m.get("local")]
         if loc:
-            L.append("\n**Local modes (sub-assemblies, not the frame):** " + ", ".join(f"{m['freq_hz']:.0f} Hz ({m['dominant']})" for m in loc))
+            L.append(f"\n**Local modes (sub-assemblies, not the frame; {len(loc)} found, first 10):** " + ", ".join(f"{m['freq_hz']:.0f} Hz ({m['dominant']})" for m in loc[:10]))
     L.append("\n## Automatic findings\n")
     L += [f"- {f}" for f in finds]
     L.append("\n## What-if studies (stiffness gain vs current design)\n")
@@ -1568,7 +1600,7 @@ def write_json(model, A, args, finds, ai_text, outdir):
         file=os.path.abspath(args.step), version=__version__, settings=vars(args).copy(),
         summary=A["summary"], findings=finds,
         modes=[dict(freq_hz=m["freq_hz"], shape=m["shape"], local=m.get("local", False), frame_share=m.get("frame_share"),
-                    energy=ser_en(m["energy"])[:10]) for m in A["modes"]],
+                    energy=ser_en(m["energy"])[:10]) for m in A["modes"][:40]],
         energies={k: ser_en(v) for k, v in A["energies"].items()},
         whatifs=A["whatifs"], members=member_table(model),
         excluded=[dict(name=n, reason=r) for n, r in model.excluded], floating=model.floating,
@@ -1610,7 +1642,7 @@ def add_model_args(ap):
     g.add_argument("--print-profile", default="duender_load_bearing",
                    help="print settings for printed parts no library rule gives one (see library print_profiles)")
     g.add_argument("--ignore", default="", help="extra regex of body names to ignore (library rules already skip fasteners)")
-    g.add_argument("--min-volume", type=float, default=300.0, help="ignore bodies smaller than this, mm^3")
+    g.add_argument("--min-volume", type=float, default=50.0, help="ignore bodies smaller than this, mm^3 (fasteners are skipped by name anyway)")
     g.add_argument("--contact-tol", type=float, default=0.3, help="gap below which two bodies count as connected, mm")
     g.add_argument("--contact-spacing", type=float, default=60.0, help="spacing of connection points along long contacts, mm")
     g.add_argument("--slender", type=float, default=3.0, help="length/width ratio above which a body is a beam")

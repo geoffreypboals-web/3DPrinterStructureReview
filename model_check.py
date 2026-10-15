@@ -191,11 +191,16 @@ def run_checks(parts, excluded, contacts, lib, args, edition=None, interference=
                 add(FAIL if got < q else WARN, "parts list", k,
                     f"expected {q}, found {got} ({labels})")
         assigned = set().union(*by_key.values()) if by_key else set()
-        unknown = sorted({_base_label(n) for n in inst if not _key_of(n, keys) and n not in assigned})
-        if unknown:
+        rest = [n for n in inst if not _key_of(n, keys) and n not in assigned]
+        big = sorted({_base_label(n) for n in rest if max(p.volume for p in inst[n]) > 2000})
+        small = len(rest) - len([n for n in rest if max(p.volume for p in inst[n]) > 2000])
+        if big:
             add(WARN, "parts list", "not in the manual",
-                f"{len(unknown)} part labels have no key letter from the manual: " + ", ".join(unknown[:15])
-                + (" ..." if len(unknown) > 15 else ""))
+                f"{len(big)} part(s) have no key letter from the manual: " + ", ".join(big[:15])
+                + (" ..." if len(big) > 15 else ""))
+        if small:
+            add(PASS, "parts list", "small unnamed bodies",
+                f"{small} small unnamed bodies (carriage end caps, seals and similar) not checked")
         # profile + length per keyed part
         for line in ed["parts"]:
             if "length" not in line:

@@ -153,7 +153,7 @@
   },
   "part_rules": [
     {
-      "match": "^hw\\b|(?<!lead )(?<!ball )screw|\\bnut\\b|t-?nut|washer|insert|spacer|\\bpin\\b|f623|bearing|shim",
+      "match": "^hw\\b|(?<!lead )(?<!ball )screw|\\bnut\\b|t-?nut|washer|insert|(?<!bed )spacer|\\bpin\\b|f623|bearing|shim",
       "role": "fastener",
       "ignore": true
     },
@@ -180,7 +180,9 @@
     {
       "match": "lead ?screw|\\bt8\\b",
       "role": "lead screw",
-      "material": "steel"
+      "material": "steel",
+      "structural": false,
+      "note": "carried by the Z nuts / decouplers; no lateral stiffness for the frame (still checked by validate_model.py)"
     },
     {
       "match": "coupler",
