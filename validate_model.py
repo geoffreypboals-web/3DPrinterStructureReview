@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check a printer STEP model before trusting any analysis of it (T-015).
+"""Check a printer STEP model before trusting any analysis of it (T-020).
 
     python validate_model.py printer.step                 # generic checks; Duender edition auto-detected
     python validate_model.py printer.step --edition c500  # force the C500 parts list

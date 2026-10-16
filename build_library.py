@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build library/duender_generated.json from this repo's Duender CAD (T-015).
+"""Build library/duender_generated.json from this repo's Duender CAD (T-020).
 
 Reads (no FreeCAD needed, only gmsh):
   cad/designs/duender-large/lib/profile_2020.brep, profile_2040.brep, rail_mgn12.brep  (real sections)

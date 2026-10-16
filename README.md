@@ -1,4 +1,4 @@
-# printer-stiffness (T-015)
+# printer-stiffness (T-020)
 
 Stand-alone tools (no Claude needed) for checking and improving a printer frame from its STEP file.
 The physics runs in Python; the improvement write-up comes from the **local** LLM (Ollama on lambda2).

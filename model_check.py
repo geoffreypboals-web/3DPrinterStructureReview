@@ -1,4 +1,4 @@
-"""Model validation for printer STEP files (T-015).
+"""Model validation for printer STEP files (T-020).
 
 Generic checks (any printer):
   units / size sanity, duplicate bodies, bodies that touch nothing, section of a body vs the profile its name
