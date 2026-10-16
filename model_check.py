@@ -11,6 +11,7 @@ Edition checks (Duender C300/C400/C500, from library/duender_generated.json):
 
 Used by validate_model.py (stand-alone) and by printer_stiffness.py --edition.
 """
+import ast
 import math
 import re
 
@@ -237,12 +238,36 @@ def run_checks(parts, excluded, contacts, lib, args, edition=None, interference=
                 continue
             env = {t: float(np.mean(lengths[t])) for t in toks}
             lhs, rhs = expr.split("==")
-            a, b = eval(lhs, {"__builtins__": {}}, env), eval(rhs, {"__builtins__": {}}, env)
+            try:
+                a, b = _arith(lhs, env), _arith(rhs, env)
+            except (ValueError, SyntaxError, ZeroDivisionError):
+                continue
             add(PASS if abs(a - b) <= tol_w else FAIL, "rules", expr,
                 f"{a:.1f} vs {b:.1f} mm - {rel.get('why', '')}")
 
     counts = {lvl: sum(1 for c in checks if c["level"] == lvl) for lvl in (PASS, WARN, FAIL)}
     return dict(edition=edition, checks=checks, counts=counts, lengths={k: v for k, v in lengths.items()})
+
+
+_OPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
+        ast.Mult: lambda a, b: a * b, ast.Div: lambda a, b: a / b}
+
+
+def _arith(expr, env):
+    """+ - * / on numbers and part keys only: library files may come from anyone, so no eval()."""
+    def ev(n):
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and type(n.value) in (int, float):
+            return n.value
+        if isinstance(n, ast.Name) and n.id in env:
+            return env[n.id]
+        if isinstance(n, ast.BinOp) and type(n.op) in _OPS:
+            return _OPS[type(n.op)](ev(n.left), ev(n.right))
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub):
+            return -ev(n.operand)
+        raise ValueError(f"not allowed in a rule: {ast.dump(n)[:60]}")
+    return ev(ast.parse(expr.strip(), mode="eval"))
 
 
 def interference_volumes(gmsh, parts, contacts, metals=("aluminum", "steel")):

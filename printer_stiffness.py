@@ -492,12 +492,20 @@ def _cache_path(args, lib):
     return os.path.join(d, f"{os.path.basename(args.step)}.{h}.pkl")
 
 
+def _cache_trusted(path):
+    """Only unpickle a cache file this user owns and nobody else can write (pickle runs code on load)."""
+    if os.name != "posix":
+        return True      # ponytail: Windows relies on the per-user profile folder's ACL
+    st = os.stat(path)
+    return st.st_uid == os.getuid() and not st.st_mode & 0o022
+
+
 def load_parts_cached(args, quiet=False, lib=None):
     """load_parts() with a disk cache: reading a big STEP and finding contacts takes minutes, the analysis
     seconds - re-runs with other loads or AI settings reuse the geometry. --no-cache to force a re-read."""
     import pickle
     path = None if getattr(args, "no_cache", False) else _cache_path(args, lib)
-    if path and os.path.isfile(path):
+    if path and os.path.isfile(path) and _cache_trusted(path):
         try:
             with open(path, "rb") as f:
                 raw = pickle.load(f)

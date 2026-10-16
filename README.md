@@ -169,4 +169,4 @@ This is a **reduced-order frame model, not solid FEA**. Joint stiffness and the 
 
 ## Licence
 
-Apache License 2.0 (see `LICENSE`). See `NOTICE.md` for where the library data comes from.
+Apache License 2.0 (see `LICENSE`). See `NOTICE.md` for where the library data comes from, and `SECURITY.md` for reporting a vulnerability.
