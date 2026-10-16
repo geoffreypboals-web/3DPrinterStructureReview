@@ -1696,7 +1696,7 @@ def parse_args(argv=None):
     g.add_argument("--api", choices=["ollama", "openai"], default=os.environ.get("PS_AI_API", "ollama"),
                    help="ollama native API, or any OpenAI-compatible local server")
     g.add_argument("--ai-host", default=os.environ.get("OLLAMA_HOST_URL", "http://localhost:11434"),
-                   help="AI server URL (e.g. http://lambda02:11434 over Tailscale)")
+                   help="AI server URL (e.g. http://my-gpu-box:11434)")
     g.add_argument("--model", default=os.environ.get("PS_AI_MODEL", "llama3.1:8b"), help="model name on the AI server")
     g.add_argument("--temperature", type=float, default=0.2)
     g.add_argument("--num-ctx", type=int, default=16384, help="context window requested from Ollama")

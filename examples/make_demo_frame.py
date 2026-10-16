@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Generate a simple CoreXY-style demo frame STEP (2020 cube + MGN rails + gantry)
 to test printer_stiffness.py.   Usage:  python make_demo_frame.py demo_frame.step"""
+import os
 import sys
 import gmsh
 
 out = sys.argv[1] if len(sys.argv) > 1 else "demo_frame.step"
+os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
 W, D, H, S = 400.0, 400.0, 450.0, 20.0     # outer width, depth, height, profile size
 
 gmsh.initialize()

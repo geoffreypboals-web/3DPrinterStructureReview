@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Build library/duender_generated.json from this repo's Duender CAD (T-020).
+"""Build library/duender_generated.json from the Duender CAD in a Toolchanger-Research checkout
+(https://github.com/geoffreypboals-web/Toolchanger-Research). Most users never need this: the
+generated file is already in library/.
 
 Reads (no FreeCAD needed, only gmsh):
   cad/designs/duender-large/lib/profile_2020.brep, profile_2040.brep, rail_mgn12.brep  (real sections)
@@ -11,9 +13,9 @@ Writes:
      blocks    - bounding-box signatures of catalog parts (carriages, motor, coupler)
      editions  - expected parts per edition (key, label, profile, length, qty) + design rules
 
-The .brep files are in Git LFS: run `git lfs pull` first.  Re-run this after build_lego_mgn9.py changes a size.
+The .brep files are in Git LFS: run `git lfs pull` in that checkout first.
 
-    python tools/printer-stiffness/build_library.py
+    TOOLCHANGER_REPO=/path/to/Toolchanger-Research python build_library.py
 """
 import json
 import math
@@ -24,7 +26,8 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+# ponytail: one env var; falls back to the old in-repo location (tools/printer-stiffness/)
+REPO = os.path.abspath(os.environ.get("TOOLCHANGER_REPO") or os.path.join(HERE, "..", ".."))
 CAD = os.path.join(REPO, "cad", "designs", "duender-large")
 OUT = os.path.join(HERE, "library", "duender_generated.json")
 
@@ -89,6 +92,8 @@ def main():
     gmsh.initialize(["-noenv"])
     gmsh.option.setNumber("General.Terminal", 0)
     lib = os.path.join(CAD, "lib")
+    if not os.path.isdir(lib):
+        sys.exit(f"{lib} not found. Set TOOLCHANGER_REPO to a Toolchanger-Research checkout.")
     profiles, blocks = {}, {}
 
     # ---- extrusions (real V-slot sections)
