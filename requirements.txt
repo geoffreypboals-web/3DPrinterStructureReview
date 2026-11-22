@@ -1,4 +1,4 @@
-gmsh>=4.11
-numpy>=1.24
-scipy>=1.10
-matplotlib>=3.7
+gmsh>=4.11,<5
+numpy>=1.24,<3
+scipy>=1.10,<2
+matplotlib>=3.7,<4
