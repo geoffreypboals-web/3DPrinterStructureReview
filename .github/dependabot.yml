@@ -1,0 +1,21 @@
+# Dependency updates as reviewed PRs (board WP-320/321, owner decision 2026-11-22).
+# Monthly; minor and patch grouped into one PR; a new major comes as its own PR and goes
+# through the stable-baseline sandbox gate before it is merged.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
